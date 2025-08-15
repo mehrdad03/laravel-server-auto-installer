@@ -220,11 +220,24 @@ install_nginx_php() {
 configure_nginx() {
     print_message "Step 4/10: Configuring Nginx..."
     
-    # Create web root directory
+    # Create web root directory structure for Full Stack
     WEB_ROOT="/var/www/$MAIN_DOMAIN"
-    mkdir -p $WEB_ROOT/public
-    echo "<?php phpinfo(); ?>" > $WEB_ROOT/public/index.php
+    
+    # Create separate directories for API and Frontend
+    mkdir -p $WEB_ROOT/api
+    mkdir -p $WEB_ROOT/frontend
+    
+    # Create test files
+    echo "<?php echo json_encode(['status' => 'API Ready', 'path' => '$WEB_ROOT/api']); ?>" > $WEB_ROOT/api/index.php
+    echo "<!DOCTYPE html><html><head><title>Frontend Ready</title></head><body><h1>Frontend Ready</h1><p>Deploy Nuxt here: $WEB_ROOT/frontend</p></body></html>" > $WEB_ROOT/frontend/index.html
+    
+    # Set permissions
     chown -R www-data:www-data $WEB_ROOT
+    chmod -R 755 $WEB_ROOT
+    
+    print_info "Created directory structure:"
+    print_info "  API: $WEB_ROOT/api"
+    print_info "  Frontend: $WEB_ROOT/frontend"
     
     # Create ACME challenge directory
     mkdir -p /var/www/letsencrypt/.well-known/acme-challenge
@@ -287,16 +300,14 @@ NGINX_CONFIG
 }
 
 # Step 5: Install Let's Encrypt SSL (using webroot method)
-
 install_ssl() {
     print_message "Step 5/10: Installing Let's Encrypt SSL using webroot method..."
 
     apt install -y certbot
 
-
     if certbot certonly --webroot --non-interactive --agree-tos -m "$SSL_EMAIL" -d "$MAIN_DOMAIN" -w /var/www/letsencrypt; then
         print_message "SSL certificate obtained for $MAIN_DOMAIN"
-
+        
         SSL_CONF="/etc/nginx/sites-available/$MAIN_DOMAIN"
         cat > "$SSL_CONF" <<NGINX_SSL
 server {
@@ -339,7 +350,7 @@ server {
             fastcgi_param HTTP_X_FORWARDED_PROTO https;
             fastcgi_param SCRIPT_FILENAME \$request_filename;
         }
-  
+   
         location ~ ^/phpmyadmin/(doc|sql|setup)/ { deny all; }
     }
 
@@ -350,6 +361,7 @@ server {
     location ~ \.php\$ {
         include snippets/fastcgi-php.conf;
         fastcgi_pass unix:/run/php/php8.3-fpm.sock;
+   
         fastcgi_param HTTPS on;
         fastcgi_param HTTP_X_FORWARDED_PROTO https;
     }
@@ -360,7 +372,6 @@ server {
 }
 NGINX_SSL
 
-    
         ln -sf "$SSL_CONF" "/etc/nginx/sites-enabled/$MAIN_DOMAIN"
 
         rm -f "/etc/nginx/sites-enabled/ssl-$MAIN_DOMAIN" "/etc/nginx/sites-available/ssl-$MAIN_DOMAIN"
@@ -652,6 +663,279 @@ install_tools() {
     print_message "Development tools installed"
 }
 
+
+#!/bin/bash
+
+
+# Step 9.5: Configure Nuxt/Vue Support
+configure_nuxt_support() {
+    print_message "Step 9.5/10: Configuring Nuxt/Vue support..."
+    
+    npm install -g pm2
+    
+    # Create PM2 ecosystem config template
+    cat > /root/ecosystem.config.js.template << 'PM2_CONFIG'
+module.exports = {
+  apps: [
+    {
+      name: 'nuxt-app',
+      port: 3000,
+      exec_mode: 'cluster',
+      instances: 'max',
+      script: '.output/server/index.mjs',
+      cwd: '/var/www/DOMAIN_NAME/frontend',
+      env: {
+        NODE_ENV: 'production',
+        NITRO_PORT: 3000,
+        NITRO_HOST: '127.0.0.1'
+      },
+      error_file: '/var/log/nuxt-error.log',
+      out_file: '/var/log/nuxt-out.log',
+      log_file: '/var/log/nuxt-combined.log',
+      time: true
+    },
+    {
+      name: 'laravel-api',
+      script: 'artisan',
+      args: 'serve --host=127.0.0.1 --port=8000',
+      cwd: '/var/www/DOMAIN_NAME/api',
+      interpreter: 'php',
+      instances: 1,
+      autorestart: true,
+      watch: false,
+      error_file: '/var/log/laravel-error.log',
+      out_file: '/var/log/laravel-out.log',
+      time: true
+    }
+  ]
+}
+PM2_CONFIG
+
+    # Update Nginx config to support Nuxt + Laravel API
+    if [ ! -z "$MAIN_DOMAIN" ]; then
+        SSL_CONF="/etc/nginx/sites-available/$MAIN_DOMAIN"
+        
+        # Backup current config
+        cp $SSL_CONF ${SSL_CONF}.backup
+        
+        # Create new config with Nuxt + API support
+        cat > "$SSL_CONF" <<NGINX_NUXT
+server {
+    listen 80;
+    server_name $MAIN_DOMAIN;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/letsencrypt;
+        default_type "text/plain";
+        try_files \$uri =404;
+    }
+
+    location / { 
+        return 301 https://\$host\$request_uri; 
+    }
+}
+
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name $MAIN_DOMAIN;
+
+    ssl_certificate     /etc/letsencrypt/live/$MAIN_DOMAIN/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/$MAIN_DOMAIN/privkey.pem;
+    ssl_trusted_certificate /etc/letsencrypt/live/$MAIN_DOMAIN/chain.pem;
+
+    # SSL Security
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 10m;
+
+    # Security Headers
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+    # Gzip
+    gzip on;
+    gzip_vary on;
+    gzip_types text/plain text/css text/xml text/javascript application/json application/javascript application/xml+rss application/rss+xml application/atom+xml image/svg+xml text/javascript application/vnd.ms-fontobject application/x-font-ttf font/opentype;
+
+    location /api {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_cache_bypass \$http_upgrade;
+        
+        # PHP timeout settings
+        proxy_connect_timeout 600;
+        proxy_send_timeout 600;
+        proxy_read_timeout 600;
+        send_timeout 600;
+        
+        # CORS Headers for API
+        add_header 'Access-Control-Allow-Origin' '*' always;
+        add_header 'Access-Control-Allow-Methods' 'GET, POST, PUT, DELETE, OPTIONS' always;
+        add_header 'Access-Control-Allow-Headers' 'DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization' always;
+        add_header 'Access-Control-Expose-Headers' 'Content-Length,Content-Range' always;
+        
+        if (\$request_method = 'OPTIONS') {
+            return 204;
+        }
+    }
+
+    location /storage {
+        alias /var/www/$MAIN_DOMAIN/api/storage/app/public;
+        try_files \$uri \$uri/ =404;
+    }
+
+    # phpMyAdmin
+    location /phpmyadmin {
+        alias /usr/share/phpmyadmin;
+        index index.php;
+
+        location ~* ^/phpmyadmin/(.+\.(?:css|js|png|jpg|jpeg|gif|ico|svg|ttf|woff|woff2))\$ {
+            try_files \$uri =404;
+        }
+        
+        location ~ ^/phpmyadmin/(.+\.php)\$ {
+            include snippets/fastcgi-php.conf;
+            fastcgi_pass unix:/run/php/php8.3-fpm.sock;
+            fastcgi_param HTTPS on;
+            fastcgi_param SCRIPT_FILENAME \$request_filename;
+        }
+        
+        location ~ ^/phpmyadmin/(doc|sql|setup)/ { 
+            deny all; 
+        }
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_cache_bypass \$http_upgrade;
+        
+        # WebSocket support for HMR in dev
+        proxy_set_header Connection "Upgrade";
+        proxy_read_timeout 86400;
+    }
+
+    # Static files optimization
+    location ~* \.(jpg|jpeg|png|gif|ico|css|js|svg|woff|woff2|ttf|eot)$ {
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+        access_log off;
+    }
+}
+NGINX_NUXT
+
+        # Test and reload Nginx
+        nginx -t && systemctl reload nginx
+        
+        print_message "Nginx configured for Nuxt + Laravel API"
+    fi
+
+    # Create helper script for project deployment
+    cat > /usr/local/bin/deploy-nuxt-laravel << 'DEPLOY_SCRIPT'
+#!/bin/bash
+
+# Nuxt + Laravel Deployment Helper
+# Usage: deploy-nuxt-laravel
+
+DOMAIN="$1"
+if [ -z "$DOMAIN" ]; then
+    echo "Usage: deploy-nuxt-laravel domain.com"
+    exit 1
+fi
+
+echo "═══════════════════════════════════════════════════════"
+echo "         Deploying Nuxt + Laravel for $DOMAIN"
+echo "═══════════════════════════════════════════════════════"
+
+# Create directories
+mkdir -p /var/www/$DOMAIN/{api,frontend}
+
+echo ""
+echo "📦 Step 1: Deploy Laravel API"
+echo "─────────────────────────────────────"
+echo "cd /var/www/$DOMAIN/api"
+echo "git clone YOUR_LARAVEL_REPO ."
+echo "composer install --optimize-autoloader --no-dev"
+echo "cp .env.example .env"
+echo "php artisan key:generate"
+echo "php artisan migrate"
+echo "php artisan config:cache"
+echo "php artisan route:cache"
+echo "chown -R www-data:www-data storage bootstrap/cache"
+echo "chmod -R 775 storage bootstrap/cache"
+
+echo ""
+echo "📦 Step 2: Deploy Nuxt Frontend"
+echo "─────────────────────────────────────"
+echo "cd /var/www/$DOMAIN/frontend"
+echo "git clone YOUR_NUXT_REPO ."
+echo "npm install"
+echo "npm run build"
+echo "# or for Nuxt 3:"
+echo "npx nuxi build"
+
+echo ""
+echo "📦 Step 3: Start with PM2"
+echo "─────────────────────────────────────"
+echo "# For Nuxt 3:"
+echo "cd /var/www/$DOMAIN/frontend"
+echo "pm2 start .output/server/index.mjs --name nuxt-$DOMAIN -i max"
+echo ""
+echo "# For Laravel Queue (optional):"
+echo "pm2 start artisan --name laravel-queue --interpreter php -- queue:work --sleep=3"
+echo ""
+echo "pm2 save"
+echo "pm2 startup"
+
+echo ""
+echo "📦 Step 4: Configure Environment"
+echo "─────────────────────────────────────"
+echo "Edit Laravel .env:"
+echo "  APP_URL=https://$DOMAIN"
+echo "  FRONTEND_URL=https://$DOMAIN"
+echo ""
+echo "Edit Nuxt .env:"
+echo "  API_URL=https://$DOMAIN/api"
+echo "  BASE_URL=https://$DOMAIN"
+
+echo ""
+echo "✅ Deployment guide complete!"
+echo "═══════════════════════════════════════════════════════"
+DEPLOY_SCRIPT
+
+    chmod +x /usr/local/bin/deploy-nuxt-laravel
+
+    # Create PM2 startup script
+    pm2 startup systemd -u root --hp /root
+    
+    # Setup log rotation for PM2
+    pm2 install pm2-logrotate
+    pm2 set pm2-logrotate:max_size 10M
+    pm2 set pm2-logrotate:retain 7
+    pm2 set pm2-logrotate:compress true
+    
+    print_message "Nuxt/Vue support configured"
+    print_info "Deployment helper: deploy-nuxt-laravel domain.com"
+    print_info "PM2 commands: pm2 status, pm2 logs, pm2 restart all"
+}
+
 # Step 10: Setup backup and save credentials
 setup_backup() {
     print_message "Step 10/10: Setting up backup and saving credentials..."
@@ -709,9 +993,10 @@ Port: 6379
 Password: $REDIS_PASS
 
 ─────────────────────────────────────────────────────────────
-WEBSITE DIRECTORY
+WEBSITE DIRECTORIES
 ─────────────────────────────────────────────────────────────
-Path: /var/www/$MAIN_DOMAIN/public
+Laravel API: /var/www/$MAIN_DOMAIN/api
+Nuxt Frontend: /var/www/$MAIN_DOMAIN/fronten
 
 ═══════════════════════════════════════════════════════════════
 CREDENTIALS
@@ -760,6 +1045,7 @@ main() {
     install_cache
     configure_supervisor    
     install_tools
+    configure_nuxt_support  
     setup_backup
     
     print_message "Installation complete! Please reboot your server."
