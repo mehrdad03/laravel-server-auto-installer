@@ -764,7 +764,7 @@ If you encounter issues:
 </p>
 
 <p align="center">
-  <a href="https://github.com/mehrdad03/laravel-server-auto-installer-nginx-edition">
+  <a href="https://github.com/mehrdad03/laravel-server-auto-installer">
     ⭐ Star this project if you find it helpful!
   </a>
 </p>
