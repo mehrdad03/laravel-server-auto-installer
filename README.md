@@ -29,18 +29,18 @@ This script is designed for developers and system administrators who need to qui
 
 ### Method 1: One-Line Installation (Recommended)
 ```bash
-bash <(curl -s https://raw.githubusercontent.com/mehrdad03/laravel-server-auto-installer-nginx-edition/main/install.sh)
+bash <(curl -s https://raw.githubusercontent.com/mehrdad03/laravel-server-auto-installer/main/install.sh)
 ```
 
 ### Method 2: Download and Run
 ```bash
-wget -O install.sh https://raw.githubusercontent.com/mehrdad03/laravel-server-auto-installer-nginx-edition/main/install.sh && bash install.sh
+wget -O install.sh https://raw.githubusercontent.com/mehrdad03/laravel-server-auto-installer/main/install.sh && bash install.sh
 ```
 
 ### Method 3: Clone and Run
 ```bash
-git clone https://github.com/mehrdad03/laravel-server-auto-installer-nginx-edition.git
-cd laravel-server-auto-installer-nginx-edition
+git clone https://github.com/mehrdad03/laravel-server-auto-installer.git
+cd laravel-server-auto-installer
 bash install.sh
 ```
 
@@ -751,11 +751,11 @@ If you encounter issues:
 1. Check the installation log: `/var/log/laravel-installer-*.log`
 2. Review credentials: `/root/server-credentials.txt`
 3. Check service status: `systemctl status nginx php8.3-fpm mysql redis-server`
-4. Open an issue on [GitHub](https://github.com/mehrdad03/laravel-server-auto-installer-nginx-edition/issues)
+4. Open an issue on [GitHub](https://github.com/mehrdad03/laravel-server-auto-installer/issues)
 
 ## 🌟 Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=mehrdad03/laravel-server-auto-installer-nginx-edition&type=Date)](https://star-history.com/#mehrdad03/laravel-server-auto-installer-nginx-edition&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=mehrdad03/laravel-server-auto-installer&type=Date)](https://star-history.com/#mehrdad03/laravel-server-auto-installer&Date)
 
 ---
 
